@@ -22,7 +22,7 @@ function Resolve-GoogleNews([string]$gurl) {
         $w = New-Object System.Net.WebClient
         $w.Encoding = [System.Text.Encoding]::UTF8
         $w.Headers.Add("User-Agent", "Mozilla/5.0")
-        $page = $w.DownloadString($gurl)
+        $page = Get-Page $gurl
         $id = [regex]::Match($page, 'data-n-a-id="([^"]+)"').Groups[1].Value
         $sg = [regex]::Match($page, 'data-n-a-sg="([^"]+)"').Groups[1].Value
         $ts = [regex]::Match($page, 'data-n-a-ts="([^"]+)"').Groups[1].Value
@@ -53,6 +53,24 @@ if ($Url -match 'news\.google\.com') {
     }
 }
 
+# ページの取得。Windows 10 以降に標準搭載の curl.exe を優先して使う。
+# .NET の通信は一部のサイト(Cloudflare 配下など)から拒否されるため。
+$curlExe = (Get-Command curl.exe -ErrorAction SilentlyContinue)
+function Get-Page([string]$url) {
+    if ($script:curlExe) {
+        try {
+            $out = & $script:curlExe.Source -sL --max-time 25 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36" $url 2>$null
+            if ($out) { return ($out -join "`n") }
+        } catch { }
+    }
+    try {
+        $w = New-Object System.Net.WebClient
+        $w.Encoding = [System.Text.Encoding]::UTF8
+        $w.Headers.Add("User-Agent", "Mozilla/5.0")
+        return $w.DownloadString($url)
+    } catch { return $null }
+}
+
 function Convert-HtmlToText([string]$html) {
     if (-not $html) { return "" }
     $t = $html
@@ -71,7 +89,7 @@ $wc.Encoding = [System.Text.Encoding]::UTF8
 $wc.Headers.Add("User-Agent", "Mozilla/5.0")
 
 $text = ""
-try { $text = Convert-HtmlToText $wc.DownloadString($Url) } catch { $text = "" }
+$text = Convert-HtmlToText (Get-Page $Url)
 
 # 本文が取れていなければテキスト抽出サービスを使う。
 # 文字数が足りない場合と、JavaScript を求める案内ページが返った場合が対象。
@@ -83,7 +101,7 @@ if ($text -match 'JavaScriptが無効|JavaScript ?を有効|Please enable JavaSc
 
 if ($needFallback) {
     try {
-        $alt = $wc.DownloadString("https://r.jina.ai/$Url")
+        $alt = Get-Page "https://r.jina.ai/$Url"
         if ($alt -and $alt -notmatch '"code":4') {
             $text = [regex]::Replace($alt, '\s+', ' ').Trim()
         }

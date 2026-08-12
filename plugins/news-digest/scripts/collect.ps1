@@ -38,6 +38,19 @@ $wc.Encoding = [System.Text.Encoding]::UTF8
 $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36")
 $wc.Headers.Add("Accept", "application/rss+xml, application/atom+xml, application/xml, text/xml, */*")
 
+# フィードの取得。Windows 10 以降に標準搭載の curl.exe を優先して使う。
+# .NET の通信は一部のサイト(Cloudflare 配下など)から拒否されるため。
+$curlExe = (Get-Command curl.exe -ErrorAction SilentlyContinue)
+function Get-Feed([string]$url) {
+    if ($script:curlExe) {
+        try {
+            $out = & $script:curlExe.Source -sL --max-time 25 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36" $url 2>$null
+            if ($out) { return ($out -join "`n") }
+        } catch { }
+    }
+    try { return $wc.DownloadString($url) } catch { return $null }
+}
+
 # 既読記録を読み込む(seen.txt が無ければ空。削除するとすべて新着になる)
 $seenPath = Join-Path (Get-Location).Path "seen.txt"
 $seen = New-Object 'System.Collections.Generic.HashSet[string]'
@@ -53,12 +66,16 @@ $total = 0
 foreach ($src in $sources) {
     $url = $src -replace '\{KEYWORD\}', $enc
     try { $srcHost = ([uri]$url).Host } catch { $srcHost = "source" }
+    $content = Get-Feed $url
+    if (-not $content) {
+        [Console]::Error.WriteLine("取得できませんでした: $url")
+        continue
+    }
     try {
-        $content = $wc.DownloadString($url)
         $doc = New-Object System.Xml.XmlDocument
         $doc.LoadXml($content)
     } catch {
-        [Console]::Error.WriteLine("取得できませんでした: $url ($($_.Exception.Message))")
+        [Console]::Error.WriteLine("読み取れませんでした: $url ($($_.Exception.Message))")
         continue
     }
     # RSS/RDF(item) と Atom(entry) の両方に対応(名前空間を無視して local-name で拾う)
