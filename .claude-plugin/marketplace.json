@@ -1,0 +1,14 @@
+{
+  "name": "workshop-tools",
+  "description": "ワークショップ配布ツール",
+  "owner": {
+    "name": "Annaka Hidekuni"
+  },
+  "plugins": [
+    {
+      "name": "news-digest",
+      "source": "./plugins/news-digest",
+      "description": "気になるキーワードのニュースを収集し「今日読むべき3件」のレポートを作成する"
+    }
+  ]
+}
