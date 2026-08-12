@@ -11,7 +11,7 @@
 param([string]$Keyword = "生成AI")
 
 $PerSource = 20   # 各情報源から残す最大件数
-$SeenKeep  = 3000 # 既読記録として保持する最大件数
+$SeenKeep  = 30000 # 既読記録として保持する最大件数(約140日分)
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 

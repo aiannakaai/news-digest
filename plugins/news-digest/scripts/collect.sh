@@ -16,7 +16,7 @@ PER_SOURCE=20          # 各情報源から残す最大件数
 OUT="items.txt"
 SRC_FILE="sources.txt"
 SEEN_FILE="seen.txt"   # 既読記録。削除するとすべて新着として扱う
-SEEN_KEEP=3000         # 既読記録として保持する最大件数
+SEEN_KEEP=30000        # 既読記録として保持する最大件数(約140日分。フィードは最長30日分を保持するため十分な余裕を持たせる)
 
 DEFAULT_SOURCES=(
   "https://news.google.com/rss/search?q={KEYWORD}&hl=ja&gl=JP&ceid=JP:ja"
