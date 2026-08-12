@@ -8,7 +8,7 @@
     {
       "name": "news-digest",
       "source": "./plugins/news-digest",
-      "description": "気になるキーワードのニュースを収集し「今日読むべき3件」のレポートを作成する"
+      "description": "気になるキーワードのニュースを集め、選んだ記事の本文を読んでレポートを作成する"
     }
   ]
 }
