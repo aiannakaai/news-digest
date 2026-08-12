@@ -20,10 +20,23 @@ $ErrorActionPreference = "Stop"
 $curlExe = (Get-Command curl.exe -ErrorAction SilentlyContinue)
 function Get-Page([string]$url) {
     if ($script:curlExe) {
+        # 標準出力経由だと文字コードが壊れるため、いったんファイルに保存してから読む
+        $tmp = [System.IO.Path]::GetTempFileName()
         try {
-            $out = & $script:curlExe.Source -sL --max-time 25 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36" $url 2>$null
-            if ($out) { return ($out -join "`n") }
-        } catch { }
+            & $script:curlExe.Source -sL --max-time 25 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36" -o $tmp $url 2>$null | Out-Null
+            if ((Test-Path $tmp) -and ((Get-Item $tmp).Length -gt 0)) {
+                $bytes = [System.IO.File]::ReadAllBytes($tmp)
+                # 文字コードは HTML の宣言から判定する。既定は UTF-8
+                $head = [System.Text.Encoding]::ASCII.GetString($bytes, 0, [Math]::Min(3000, $bytes.Length))
+                $enc = [System.Text.Encoding]::UTF8
+                if ($head -match '(?i)charset\s*=\s*["'']?\s*(shift[_-]?jis|x-sjis|windows-31j)') {
+                    $enc = [System.Text.Encoding]::GetEncoding("shift_jis")
+                } elseif ($head -match '(?i)charset\s*=\s*["'']?\s*(euc-jp)') {
+                    $enc = [System.Text.Encoding]::GetEncoding("euc-jp")
+                }
+                return $enc.GetString($bytes)
+            }
+        } catch { } finally { Remove-Item $tmp -ErrorAction SilentlyContinue }
     }
     try {
         $w = New-Object System.Net.WebClient
@@ -117,6 +130,10 @@ if ($text.Length -lt $MinChars) { $needFallback = $true }
 if ($text -match 'JavaScriptが無効|JavaScript ?を有効|Please enable JavaScript|enable JavaScript|JavaScript is required|JavaScript is disabled') {
     $needFallback = $true
 }
+# 認証画面(Cloudflare など)は本文ではない
+if ($text -match 'Just a moment|Enable JavaScript and cookies to continue|Checking your browser|cf-browser-verification|コンテンツブロックが有効') {
+    $needFallback = $true
+}
 
 if ($needFallback) {
     try {
@@ -127,6 +144,10 @@ if ($needFallback) {
     } catch { }
 }
 
+if ($text -match 'Just a moment|Enable JavaScript and cookies to continue|Checking your browser|コンテンツブロックが有効') {
+    Write-Output "本文なし: サイトが自動アクセスを拒否しました。見出しだけで書き、(見出しのみ)と付けてください。"
+    exit 0
+}
 if ($text.Length -lt 200) {
     Write-Output "本文なし: 取得できませんでした。見出しだけで書き、(見出しのみ)と付けてください。"
     exit 0

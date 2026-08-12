@@ -59,8 +59,9 @@ description: 気になるキーワードのニュースを収集し、自分好�
 
    ユーザーの立場に応じて、次のような足し方も提案する。
    - 業務で AI を使う立場: 既定の note と AINOW が該当する。物足りなければ ASCII.jp `https://ascii.jp/rss.xml` を足す
-   - 開発者: Zenn の AI トピック `https://zenn.dev/topics/ai/feed`、Hacker News `https://hnrss.org/newest?q={KEYWORD}&points=50`
+   - 開発者: Zenn の AI トピック `https://zenn.dev/topics/ai/feed`、Hacker News `https://hnrss.org/newest?q={KEYWORD}&points=50`(英語のキーワードのときだけ使える)
    - 経営・企画: 情報源を足すより、キーワードを「AI 導入事例」「生成AI 業務効率化」のように業務寄りにするほうが効く
+   - 製造業・半導体を追う人: EE Times Japan `https://rss.itmedia.co.jp/rss/2.0/eetimes.xml`、MONOist `https://rss.itmedia.co.jp/rss/2.0/monoist.xml`
    - 研究・調査: arXiv `http://export.arxiv.org/rss/cs.AI`(件数が多いので絞り方の指定を勧める)
 3. OS に合わせて収集スクリプトを、`~/news-reports` をカレントディレクトリにして実行する。キーワードは、ユーザーの指定があればそれを、なければ `preferences.md` の既定キーワードを引数で渡す
    - macOS: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/collect.sh" "<キーワード>"`

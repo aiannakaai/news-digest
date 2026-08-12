@@ -79,6 +79,11 @@ fi
 # 文字数が足りない場合と、JavaScript を求める案内ページが返った場合が対象。
 NEED_FALLBACK=0
 [ "$(printf '%s' "$TEXT" | wc -m | tr -d ' ')" -lt "$MIN_CHARS" ] && NEED_FALLBACK=1
+# 認証画面(Cloudflare など)は本文ではない
+case "$TEXT" in
+  *"Just a moment"*|*"Enable JavaScript and cookies to continue"*|*"Checking your browser"*|*"cf-browser-verification"*|*"コンテンツブロックが有効"*)
+    NEED_FALLBACK=1 ;;
+esac
 case "$TEXT" in
   *"JavaScriptが無効"*|*"JavaScript を有効"*|*"JavaScriptを有効"*|*"Please enable JavaScript"*|*"enable JavaScript"*|*"JavaScript is required"*|*"JavaScript is disabled"*)
     NEED_FALLBACK=1 ;;
@@ -91,6 +96,12 @@ if [ "$NEED_FALLBACK" -eq 1 ]; then
     fi
   fi
 fi
+
+case "$TEXT" in
+  *"Just a moment"*|*"Enable JavaScript and cookies to continue"*|*"Checking your browser"*|*"コンテンツブロックが有効"*)
+    echo "本文なし: サイトが自動アクセスを拒否しました。見出しだけで書き、(見出しのみ)と付けてください。"
+    exit 0 ;;
+esac
 
 CHARS=$(printf '%s' "$TEXT" | wc -m | tr -d ' ')
 if [ "$CHARS" -lt 200 ]; then
