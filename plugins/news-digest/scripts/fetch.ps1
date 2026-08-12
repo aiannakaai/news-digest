@@ -19,28 +19,47 @@ $ErrorActionPreference = "Stop"
 # Googleニュースの転送リンクは、元記事の URL を調べてから取得する
 function Resolve-GoogleNews([string]$gurl) {
     try {
-        $w = New-Object System.Net.WebClient
-        $w.Encoding = [System.Text.Encoding]::UTF8
-        $w.Headers.Add("User-Agent", "Mozilla/5.0")
         $page = Get-Page $gurl
+        if (-not $page) { [Console]::Error.WriteLine("転送ページを取得できません"); return "" }
         $id = [regex]::Match($page, 'data-n-a-id="([^"]+)"').Groups[1].Value
         $sg = [regex]::Match($page, 'data-n-a-sg="([^"]+)"').Groups[1].Value
         $ts = [regex]::Match($page, 'data-n-a-ts="([^"]+)"').Groups[1].Value
-        if (-not $id -or -not $sg) { return "" }
+        if (-not $id -or -not $sg) { [Console]::Error.WriteLine("転送ページに必要な値がありません"); return "" }
         if (-not $ts) { $ts = "0" }
+
         $inner = '["garturlreq",[["ja","JP",["FINANCE_TOP_INDICES","WEB_TEST_1_0_0"],null,null,1,1,"JP:ja",null,null,null,null,null,null,null,0],"ja-JP","JP",1,[2,4,8],1,1,null,0,0,null,0],"' + $id + '",' + $ts + ',"' + $sg + '"]'
         $esc = $inner.Replace('\', '\\').Replace('"', '\"')
         $freq = '[[["Fbv4je","' + $esc + '",null,"generic"]]]'
-        $body = "f.req=" + [uri]::EscapeDataString($freq)
-        $w2 = New-Object System.Net.WebClient
-        $w2.Encoding = [System.Text.Encoding]::UTF8
-        $w2.Headers.Add("User-Agent", "Mozilla/5.0")
-        $w2.Headers.Add("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8")
-        $res = $w2.UploadString("https://news.google.com/_/DotsSplashUi/data/batchexecute", "POST", $body)
+
+        $res = ""
+        if ($script:curlExe) {
+            # mac 版と同じ経路。要求文字列はファイルに書いて渡す(コマンドラインの長さ制限と引用符の問題を避けるため)
+            $tmp = [System.IO.Path]::GetTempFileName()
+            [System.IO.File]::WriteAllText($tmp, $freq, (New-Object System.Text.UTF8Encoding($false)))
+            try {
+                $out = & $script:curlExe.Source -s --max-time 25 -X POST "https://news.google.com/_/DotsSplashUi/data/batchexecute" `
+                    -H "Content-Type: application/x-www-form-urlencoded;charset=UTF-8" `
+                    -A "Mozilla/5.0" --data-urlencode "f.req@$tmp" 2>$null
+                if ($out) { $res = ($out -join "`n") }
+            } finally { Remove-Item $tmp -ErrorAction SilentlyContinue }
+        }
+        if (-not $res) {
+            $body = "f.req=" + [uri]::EscapeDataString($freq)
+            $w2 = New-Object System.Net.WebClient
+            $w2.Encoding = [System.Text.Encoding]::UTF8
+            $w2.Headers.Add("User-Agent", "Mozilla/5.0")
+            $w2.Headers.Add("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8")
+            $res = $w2.UploadString("https://news.google.com/_/DotsSplashUi/data/batchexecute", "POST", $body)
+        }
+        if (-not $res) { [Console]::Error.WriteLine("解決の問い合わせに応答がありません"); return "" }
+
         foreach ($m in [regex]::Matches($res, 'https?://[^\\"]{15,}')) {
             if ($m.Value -notmatch 'news\.google|www\.google|gstatic') { return $m.Value }
         }
-    } catch { }
+        [Console]::Error.WriteLine("応答に元記事の URL が含まれていません")
+    } catch {
+        [Console]::Error.WriteLine("転送リンクの解決で例外: $($_.Exception.Message)")
+    }
     return ""
 }
 
