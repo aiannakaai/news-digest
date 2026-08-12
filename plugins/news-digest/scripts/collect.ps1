@@ -34,6 +34,9 @@ if (-not $sources -or @($sources).Count -eq 0) { $sources = $defaultSources }
 
 $wc = New-Object System.Net.WebClient
 $wc.Encoding = [System.Text.Encoding]::UTF8
+# UA を付けないと取得を拒否するサイトがある
+$wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36")
+$wc.Headers.Add("Accept", "application/rss+xml, application/atom+xml, application/xml, text/xml, */*")
 
 # 既読記録を読み込む(seen.txt が無ければ空。削除するとすべて新着になる)
 $seenPath = Join-Path (Get-Location).Path "seen.txt"
@@ -55,7 +58,7 @@ foreach ($src in $sources) {
         $doc = New-Object System.Xml.XmlDocument
         $doc.LoadXml($content)
     } catch {
-        [Console]::Error.WriteLine("取得できませんでした: $url")
+        [Console]::Error.WriteLine("取得できませんでした: $url ($($_.Exception.Message))")
         continue
     }
     # RSS/RDF(item) と Atom(entry) の両方に対応(名前空間を無視して local-name で拾う)
