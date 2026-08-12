@@ -43,10 +43,25 @@ $wc.Headers.Add("Accept", "application/rss+xml, application/atom+xml, applicatio
 $curlExe = (Get-Command curl.exe -ErrorAction SilentlyContinue)
 function Get-Feed([string]$url) {
     if ($script:curlExe) {
+        # 標準出力経由だと内容が壊れるため、いったんファイルに保存してから読む
+        $tmp = [System.IO.Path]::GetTempFileName()
         try {
-            $out = & $script:curlExe.Source -sL --max-time 25 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36" $url 2>$null
-            if ($out) { return ($out -join "`n") }
-        } catch { }
+            & $script:curlExe.Source -sL --max-time 25 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36" -o $tmp $url 2>$null | Out-Null
+            if ((Test-Path $tmp) -and ((Get-Item $tmp).Length -gt 0)) {
+                $bytes = [System.IO.File]::ReadAllBytes($tmp)
+                # 文字コードは XML 宣言から判定する。既定は UTF-8
+                $head = [System.Text.Encoding]::ASCII.GetString($bytes, 0, [Math]::Min(300, $bytes.Length))
+                $enc = [System.Text.Encoding]::UTF8
+                if ($head -match '(?i)encoding\s*=\s*["''](shift[_-]?jis|x-sjis|windows-31j)["'']') {
+                    $enc = [System.Text.Encoding]::GetEncoding("shift_jis")
+                } elseif ($head -match '(?i)encoding\s*=\s*["''](euc-jp)["'']') {
+                    $enc = [System.Text.Encoding]::GetEncoding("euc-jp")
+                }
+                $text = $enc.GetString($bytes)
+                # BOM が残っていると XML の解析に失敗するため取り除く
+                return $text.TrimStart([char]0xFEFF)
+            }
+        } catch { } finally { Remove-Item $tmp -ErrorAction SilentlyContinue }
     }
     try { return $wc.DownloadString($url) } catch { return $null }
 }
