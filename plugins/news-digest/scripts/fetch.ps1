@@ -17,6 +17,22 @@ $ErrorActionPreference = "Stop"
 
 # news.google.com の転送 URL は元記事にたどり着けないため取得しない
 # Googleニュースの転送リンクは、元記事の URL を調べてから取得する
+$curlExe = (Get-Command curl.exe -ErrorAction SilentlyContinue)
+function Get-Page([string]$url) {
+    if ($script:curlExe) {
+        try {
+            $out = & $script:curlExe.Source -sL --max-time 25 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36" $url 2>$null
+            if ($out) { return ($out -join "`n") }
+        } catch { }
+    }
+    try {
+        $w = New-Object System.Net.WebClient
+        $w.Encoding = [System.Text.Encoding]::UTF8
+        $w.Headers.Add("User-Agent", "Mozilla/5.0")
+        return $w.DownloadString($url)
+    } catch { return $null }
+}
+
 function Resolve-GoogleNews([string]$gurl) {
     try {
         $page = Get-Page $gurl
@@ -74,22 +90,6 @@ if ($Url -match 'news\.google\.com') {
 
 # ページの取得。Windows 10 以降に標準搭載の curl.exe を優先して使う。
 # .NET の通信は一部のサイト(Cloudflare 配下など)から拒否されるため。
-$curlExe = (Get-Command curl.exe -ErrorAction SilentlyContinue)
-function Get-Page([string]$url) {
-    if ($script:curlExe) {
-        try {
-            $out = & $script:curlExe.Source -sL --max-time 25 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36" $url 2>$null
-            if ($out) { return ($out -join "`n") }
-        } catch { }
-    }
-    try {
-        $w = New-Object System.Net.WebClient
-        $w.Encoding = [System.Text.Encoding]::UTF8
-        $w.Headers.Add("User-Agent", "Mozilla/5.0")
-        return $w.DownloadString($url)
-    } catch { return $null }
-}
-
 function Convert-HtmlToText([string]$html) {
     if (-not $html) { return "" }
     $t = $html

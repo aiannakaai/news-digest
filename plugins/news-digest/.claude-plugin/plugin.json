@@ -2,7 +2,7 @@
   "name": "news-digest",
   "displayName": "ニュースまとめAI",
   "description": "気になるキーワードのニュースを集め、選んだ記事の本文を読んでレポートを作成する",
-  "version": "2.7.1",
+  "version": "2.7.2",
   "author": {
     "name": "Annaka Hidekuni"
   },
