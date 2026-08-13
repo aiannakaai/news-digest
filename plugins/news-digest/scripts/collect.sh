@@ -82,12 +82,52 @@ done
 
 touch "$TMP/parsed.txt" "$SEEN_FILE"
 
-# 既読(タイトルが一致するもの)を除き、新着だけを残す。同じ実行内の重複も除く。
-awk -F'\t' -v seenfile="$SEEN_FILE" '
-  BEGIN { while ((getline line < seenfile) > 0) seen[line] = 1 }
-  { key = $3 }
-  key != "" && !(key in seen) { seen[key] = 1; print }
-' "$TMP/parsed.txt" > "$TMP/new.txt"
+# 既読を除き、新着だけを残す。同じ実行内の重複も除く。
+#
+# 同じ記事が複数の情報源から入ってくるため、タイトルをそのまま比べても重複を取り除けない。
+# Googleニュースは末尾に「 - 媒体名」を付け、はてなは全角スペースを使い、
+# ブックマークのページは『〜』へのコメントという題になる。そこで形を揃えてから比べる。
+#
+# 重複したときは Googleニュース以外を残す。Googleニュースのリンクは転送用で、
+# 記事そのものの URL ではないため、レポートに載せるリンクとして望ましくないため。
+SEEN_FILE="$SEEN_FILE" PARSED="$TMP/parsed.txt" perl -CSD -e '
+  use utf8;
+  sub norm {
+    my $t = shift;
+    $t =~ s/^『(.*)』へのコメント$/$1/;          # はてなのブックマークページ
+    $t =~ s/\x{3000}/ /g;                        # 全角スペース
+    $t =~ s/\s+/ /g; $t =~ s/^\s+//; $t =~ s/\s+$//;
+    my $c = $t;
+    $c =~ s/\s+[-|｜–—]\s+[^-|｜–—]{1,30}$//;     # 末尾の媒体名(「 - ASCII.jp」「 | Business Insider Japan」など)
+    $t = $c if length($c) >= 10;                 # 削りすぎたときは元に戻す
+    $t =~ s/\s*\(\d+\/\d+\)\s*$//;               # (1/5) のようなページ番号。媒体名を外した後に見る
+    $t =~ s/\s+$//;
+    return $t;
+  }
+  my (%seen, %other);
+  if (open(my $s, "<:utf8", $ENV{SEEN_FILE})) {
+    while (<$s>) { chomp; next unless /\S/; $seen{norm($_)} = 1 }   # 過去の記録も同じ形に揃える
+    close $s;
+  }
+  my @lines;
+  open(my $p, "<:utf8", $ENV{PARSED}) or exit 0;
+  while (<$p>) { chomp; push @lines, $_ if /\S/ }
+  close $p;
+  for my $l (@lines) {
+    my @f = split /\t/, $l, -1;
+    next if @f < 3;
+    $other{norm($f[2])} = 1 if $f[0] ne "news.google.com";
+  }
+  for my $l (@lines) {
+    my @f = split /\t/, $l, -1;
+    next if @f < 3;
+    my $k = norm($f[2]);
+    next if $k eq "" || $seen{$k};
+    next if $f[0] eq "news.google.com" && $other{$k};
+    $seen{$k} = 1;
+    print "$l\n";
+  }
+' > "$TMP/new.txt"
 
 {
   echo "# キーワード: $KEYWORD / 取得日時: $(date '+%Y-%m-%d %H:%M')"

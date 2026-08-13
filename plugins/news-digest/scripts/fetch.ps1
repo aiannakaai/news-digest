@@ -11,7 +11,9 @@ param(
     [int]$MaxChars = 3000   # 1記事から渡す最大文字数(利用枠を使いすぎないため)
 )
 
-$MinChars = 800             # これ未満なら取得に失敗したとみなす
+$MinChars  = 800            # これ未満なら取得に失敗したとみなす
+$JinaTries = 2              # テキスト抽出サービスを試す回数
+$RetryWait = 3              # 取り直しまでに待つ秒数(取得制限に当たったときのため)
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
@@ -120,36 +122,57 @@ $wc = New-Object System.Net.WebClient
 $wc.Encoding = [System.Text.Encoding]::UTF8
 $wc.Headers.Add("User-Agent", "Mozilla/5.0")
 
-$text = ""
+# 認証画面や案内ページに出る文言が含まれるかを調べる。
+# これは「本文が取れていないかもしれない」という手がかりであって、それだけでは失敗と決めない。
+# 広告ブロックの警告のように、本文が読めるページにも常に埋め込まれている文言があるため。
+# 実際に失敗かどうかは、最後に文字数で判定する。
+$noticePattern = 'Just a moment|Enable JavaScript and cookies to continue|Checking your browser|cf-browser-verification|コンテンツブロックが有効|JavaScriptが無効|JavaScript ?を有効|Please enable JavaScript|enable JavaScript|JavaScript is required|JavaScript is disabled'
+
+# 取り直すときに、前回と違う URL にするためのパラメータを足す
+function Add-Bust([string]$url, [int]$n) {
+    # 変数名が続きの文字まで飲み込まないよう ${} で囲む
+    if ($url -match '\?') { return "${url}&_ndg=${n}" } else { return "${url}?_ndg=${n}" }
+}
+
+# テキスト抽出サービスから本文を取る。
+# 1回目が短かったときは、取得制限に当たっている場合と、誤ったページが
+# 向こうにキャッシュされている場合がある。そのため、間を置いたうえで、
+# URL にパラメータを足して(=別の URL として)取り直す。
+function Get-JinaText([string]$url) {
+    for ($n = 1; $n -le $script:JinaTries; $n++) {
+        $target = $url
+        if ($n -gt 1) {
+            $target = Add-Bust $url $n
+            Start-Sleep -Seconds $script:RetryWait
+        }
+        try {
+            $alt = Get-Page "https://r.jina.ai/$target"
+            if ($alt -and $alt -notmatch '"code":4') {
+                $t = [regex]::Replace($alt, '\s+', ' ').Trim()
+                if ($t.Length -ge $script:MinChars) { return $t }
+            }
+        } catch { }
+    }
+    return ""
+}
+
 $text = Convert-HtmlToText (Get-Page $Url)
 
-# 本文が取れていなければテキスト抽出サービスを使う。
-# 文字数が足りない場合と、JavaScript を求める案内ページが返った場合が対象。
-$needFallback = $false
-if ($text.Length -lt $MinChars) { $needFallback = $true }
-if ($text -match 'JavaScriptが無効|JavaScript ?を有効|Please enable JavaScript|enable JavaScript|JavaScript is required|JavaScript is disabled') {
-    $needFallback = $true
-}
-# 認証画面(Cloudflare など)は本文ではない
-if ($text -match 'Just a moment|Enable JavaScript and cookies to continue|Checking your browser|cf-browser-verification|コンテンツブロックが有効') {
-    $needFallback = $true
+# 直接取得が短いか、案内ページの文言を含むときはテキスト抽出サービスも試す。
+# 取れた本文のほうが長ければそちらを使う(直接取得が本文を含んでいることもあるため)。
+if ($text.Length -lt $MinChars -or $text -match $noticePattern) {
+    $alt = Get-JinaText $Url
+    if ($alt -and $alt.Length -gt $text.Length) { $text = $alt }
 }
 
-if ($needFallback) {
-    try {
-        $alt = Get-Page "https://r.jina.ai/$Url"
-        if ($alt -and $alt -notmatch '"code":4') {
-            $text = [regex]::Replace($alt, '\s+', ' ').Trim()
-        }
-    } catch { }
-}
-
-if ($text -match 'Just a moment|Enable JavaScript and cookies to continue|Checking your browser|コンテンツブロックが有効') {
-    Write-Output "本文なし: サイトが自動アクセスを拒否しました。見出しだけで書き、(見出しのみ)と付けてください。"
-    exit 0
-}
-if ($text.Length -lt 200) {
-    Write-Output "本文なし: 取得できませんでした。見出しだけで書き、(見出しのみ)と付けてください。"
+# 規定の長さに届かないものは、本文ではなくメニューや案内の断片とみなす。
+# 中途半端な文字列を本文として渡すと、印の付かない誤った要約になってしまうため。
+if ($text.Length -lt $MinChars) {
+    if ($text -match $noticePattern) {
+        Write-Output "本文なし: サイトが自動アクセスを拒否しました。見出しだけで書き、(見出しのみ)と付けてください。"
+    } else {
+        Write-Output "本文なし: 取得できませんでした。見出しだけで書き、(見出しのみ)と付けてください。"
+    }
     exit 0
 }
 

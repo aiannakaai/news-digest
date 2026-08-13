@@ -12,6 +12,8 @@ set -u
 URL="${1:-}"
 MAX_CHARS="${2:-3000}"   # 1記事から渡す最大文字数(利用枠を使いすぎないため)
 MIN_CHARS=800            # これ未満なら取得に失敗したとみなす
+JINA_TRIES=2             # テキスト抽出サービスを試す回数
+RETRY_WAIT=3             # 取り直しまでに待つ秒数(取得制限に当たったときのため)
 
 if [ -z "$URL" ]; then
   echo "URL を指定してください" >&2
@@ -70,42 +72,80 @@ extract() {
   '
 }
 
+chars() { printf '%s' "$1" | wc -m | tr -d ' '; }
+
+# 認証画面や案内ページに出る文言が含まれるかを調べる。
+# これは「本文が取れていないかもしれない」という手がかりであって、それだけでは失敗と決めない。
+# 広告ブロックの警告のように、本文が読めるページにも常に埋め込まれている文言があるため。
+# 実際に失敗かどうかは、最後に文字数で判定する。
+has_notice() {
+  case "$1" in
+    *"Just a moment"*|*"Enable JavaScript and cookies to continue"*|*"Checking your browser"*|*"cf-browser-verification"*|*"コンテンツブロックが有効"*)
+      return 0 ;;
+  esac
+  case "$1" in
+    *"JavaScriptが無効"*|*"JavaScript を有効"*|*"JavaScriptを有効"*|*"Please enable JavaScript"*|*"enable JavaScript"*|*"JavaScript is required"*|*"JavaScript is disabled"*)
+      return 0 ;;
+  esac
+  return 1
+}
+
+# 取り直すときに、前回と違う URL にするためのパラメータを足す
+bust() {
+  case "$1" in
+    *\?*) printf '%s&_ndg=%s' "$1" "$2" ;;
+    *)    printf '%s?_ndg=%s' "$1" "$2" ;;
+  esac
+}
+
+# テキスト抽出サービスから本文を取る。
+# 1回目が短かったときは、取得制限に当たっている場合と、誤ったページが
+# 向こうにキャッシュされている場合がある。そのため、間を置いたうえで、
+# URL にパラメータを足して(=別の URL として)取り直す。
+jina_text() {
+  local n=1 target t
+  while [ "$n" -le "$JINA_TRIES" ]; do
+    if [ "$n" -eq 1 ]; then
+      target="$1"
+    else
+      target=$(bust "$1" "$n")
+      sleep "$RETRY_WAIT"
+    fi
+    if curl -s --max-time 40 "https://r.jina.ai/$target" -o "$TMP/jina.txt" 2>/dev/null \
+       && [ -s "$TMP/jina.txt" ] && ! grep -q '"code":4' "$TMP/jina.txt"; then
+      t=$(tr '\n' ' ' < "$TMP/jina.txt" | perl -CSD -pe 's/\s+/ /g')
+      if [ "$(chars "$t")" -ge "$MIN_CHARS" ]; then
+        printf '%s' "$t"
+        return 0
+      fi
+    fi
+    n=$((n+1))
+  done
+  return 1
+}
+
 TEXT=""
 if curl -sL --max-time 20 -A "Mozilla/5.0" "$URL" -o "$TMP/page.html" 2>/dev/null; then
   TEXT=$(extract < "$TMP/page.html")
 fi
 
-# 本文が取れていなければテキスト抽出サービスを使う。
-# 文字数が足りない場合と、JavaScript を求める案内ページが返った場合が対象。
-NEED_FALLBACK=0
-[ "$(printf '%s' "$TEXT" | wc -m | tr -d ' ')" -lt "$MIN_CHARS" ] && NEED_FALLBACK=1
-# 認証画面(Cloudflare など)は本文ではない
-case "$TEXT" in
-  *"Just a moment"*|*"Enable JavaScript and cookies to continue"*|*"Checking your browser"*|*"cf-browser-verification"*|*"コンテンツブロックが有効"*)
-    NEED_FALLBACK=1 ;;
-esac
-case "$TEXT" in
-  *"JavaScriptが無効"*|*"JavaScript を有効"*|*"JavaScriptを有効"*|*"Please enable JavaScript"*|*"enable JavaScript"*|*"JavaScript is required"*|*"JavaScript is disabled"*)
-    NEED_FALLBACK=1 ;;
-esac
-
-if [ "$NEED_FALLBACK" -eq 1 ]; then
-  if curl -s --max-time 40 "https://r.jina.ai/$URL" -o "$TMP/page.txt" 2>/dev/null; then
-    if [ -s "$TMP/page.txt" ] && ! grep -q '"code":4' "$TMP/page.txt"; then
-      TEXT=$(tr '\n' ' ' < "$TMP/page.txt" | perl -CSD -pe 's/\s+/ /g')
-    fi
+# 直接取得が短いか、案内ページの文言を含むときはテキスト抽出サービスも試す。
+# 取れた本文のほうが長ければそちらを使う(直接取得が本文を含んでいることもあるため)。
+if [ "$(chars "$TEXT")" -lt "$MIN_CHARS" ] || has_notice "$TEXT"; then
+  ALT=$(jina_text "$URL" || true)
+  if [ -n "${ALT:-}" ] && [ "$(chars "$ALT")" -gt "$(chars "$TEXT")" ]; then
+    TEXT="$ALT"
   fi
 fi
 
-case "$TEXT" in
-  *"Just a moment"*|*"Enable JavaScript and cookies to continue"*|*"Checking your browser"*|*"コンテンツブロックが有効"*)
+# 規定の長さに届かないものは、本文ではなくメニューや案内の断片とみなす。
+# 中途半端な文字列を本文として渡すと、印の付かない誤った要約になってしまうため。
+if [ "$(chars "$TEXT")" -lt "$MIN_CHARS" ]; then
+  if has_notice "$TEXT"; then
     echo "本文なし: サイトが自動アクセスを拒否しました。見出しだけで書き、(見出しのみ)と付けてください。"
-    exit 0 ;;
-esac
-
-CHARS=$(printf '%s' "$TEXT" | wc -m | tr -d ' ')
-if [ "$CHARS" -lt 200 ]; then
-  echo "本文なし: 取得できませんでした。見出しだけで書き、(見出しのみ)と付けてください。"
+  else
+    echo "本文なし: 取得できませんでした。見出しだけで書き、(見出しのみ)と付けてください。"
+  fi
   exit 0
 fi
 

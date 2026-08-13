@@ -66,17 +66,31 @@ function Get-Feed([string]$url) {
     try { return $wc.DownloadString($url) } catch { return $null }
 }
 
+# 同じ記事が複数の情報源から入ってくるため、タイトルをそのまま比べても重複を取り除けない。
+# Googleニュースは末尾に「 - 媒体名」を付け、はてなは全角スペースを使い、
+# ブックマークのページは『〜』へのコメントという題になる。そこで形を揃えてから比べる。
+function Get-TitleKey([string]$title) {
+    $t = $title
+    $t = [regex]::Replace($t, '^『(.*)』へのコメント$', '$1')      # はてなのブックマークページ
+    $t = $t -replace [char]0x3000, ' '                             # 全角スペース
+    $t = ([regex]::Replace($t, '\s+', ' ')).Trim()
+    $c = [regex]::Replace($t, '\s+[-|｜–—]\s+[^-|｜–—]{1,30}$', '') # 末尾の媒体名
+    if ($c.Length -ge 10) { $t = $c }                              # 削りすぎたときは元に戻す
+    $t = [regex]::Replace($t, '\s*\(\d+/\d+\)\s*$', '')            # (1/5) のようなページ番号
+    return $t.Trim()
+}
+
 # 既読記録を読み込む(seen.txt が無ければ空。削除するとすべて新着になる)
+# 過去の記録も同じ形に揃えてから比べる
 $seenPath = Join-Path (Get-Location).Path "seen.txt"
 $seen = New-Object 'System.Collections.Generic.HashSet[string]'
 if (Test-Path $seenPath) {
     foreach ($s in (Get-Content $seenPath -Encoding UTF8)) {
-        if ($s -match '\S') { [void]$seen.Add($s) }
+        if ($s -match '\S') { [void]$seen.Add((Get-TitleKey $s)) }
     }
 }
 
-$newLines = New-Object System.Collections.Generic.List[string]
-$newTitles = New-Object System.Collections.Generic.List[string]
+$parsed = New-Object System.Collections.Generic.List[object]
 $total = 0
 foreach ($src in $sources) {
     $url = $src -replace '\{KEYWORD\}', $enc
@@ -122,14 +136,33 @@ foreach ($src in $sources) {
         $t = ($title -replace "[`t`r`n]+", " ")
         $total++
         $n++
-        # 既読(タイトルが一致するもの)は除く。同じ実行内の重複も除く
-        if (-not $seen.Contains($t)) {
-            [void]$seen.Add($t)
-            $newLines.Add("$srcHost`t$date`t$t`t$link$extra")
-            $newTitles.Add($t)
-        }
+        $parsed.Add([pscustomobject]@{
+            Host  = $srcHost
+            Title = $t
+            Key   = (Get-TitleKey $t)
+            Line  = "$srcHost`t$date`t$t`t$link$extra"
+        })
         if ($n -ge $PerSource) { break }
     }
+}
+
+# 重複したときは Googleニュース以外を残す。Googleニュースのリンクは転送用で、
+# 記事そのものの URL ではないため、レポートに載せるリンクとして望ましくないため。
+$fromOther = New-Object 'System.Collections.Generic.HashSet[string]'
+foreach ($p in $parsed) {
+    if ($p.Host -ne "news.google.com") { [void]$fromOther.Add($p.Key) }
+}
+
+# 既読を除き、新着だけを残す。同じ実行内の重複も除く
+$newLines = New-Object System.Collections.Generic.List[string]
+$newTitles = New-Object System.Collections.Generic.List[string]
+foreach ($p in $parsed) {
+    if ($p.Key -eq "") { continue }
+    if ($seen.Contains($p.Key)) { continue }
+    if ($p.Host -eq "news.google.com" -and $fromOther.Contains($p.Key)) { continue }
+    [void]$seen.Add($p.Key)
+    $newLines.Add($p.Line)
+    $newTitles.Add($p.Title)
 }
 
 $lines = New-Object System.Collections.Generic.List[string]
